@@ -1,0 +1,1 @@
+"""Piracy domain tools."""
