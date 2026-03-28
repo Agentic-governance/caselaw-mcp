@@ -121,14 +121,22 @@ def store_citation_index(citation_string: str, case_id: str, jurisdiction: str):
 
 def get_stats() -> dict:
     conn = get_connection()
-    total = conn.execute("SELECT COUNT(*) FROM cases").fetchone()[0]
+    # Use MAX(rowid) as fast estimate instead of COUNT(*) on 84M rows
+    total = conn.execute("SELECT MAX(rowid) FROM cases").fetchone()[0] or 0
+    # Sample-based jurisdiction breakdown for speed on large DB
     by_jur = conn.execute(
-        "SELECT jurisdiction, COUNT(*) as cnt FROM cases GROUP BY jurisdiction ORDER BY cnt DESC"
+        "SELECT jurisdiction, COUNT(*) as cnt FROM cases "
+        "WHERE rowid > (SELECT MAX(rowid) FROM cases) - 1000000 "
+        "GROUP BY jurisdiction ORDER BY cnt DESC LIMIT 100"
     ).fetchall()
-    citations = conn.execute("SELECT COUNT(*) FROM case_citations").fetchone()[0]
+    try:
+        citations = conn.execute("SELECT MAX(rowid) FROM case_citations").fetchone()[0] or 0
+    except Exception:
+        citations = 0
     conn.close()
     return {
         "total_cases": total,
         "total_citations": citations,
         "by_jurisdiction": {row["jurisdiction"]: row["cnt"] for row in by_jur},
+        "_note": "total_cases is MAX(rowid) estimate; by_jurisdiction sampled from recent 1M rows",
     }

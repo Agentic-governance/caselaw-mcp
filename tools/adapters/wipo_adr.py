@@ -16,6 +16,17 @@ class WIPOADRAdapter(BaseAdapter):
 
     SEARCH_URL = "https://www.wipo.int/amc/en/domains/search/"
 
+    SEED = [
+        {"indicator": "udrp_cases_filed", "description": "Total UDRP cases filed", "jurisdiction": "GLOBAL"},
+        {"indicator": "udrp_cases_decided", "description": "UDRP cases with panel decision", "jurisdiction": "GLOBAL"},
+        {"indicator": "udrp_transfer_rate", "description": "UDRP cases resulting in domain transfer (%)", "jurisdiction": "GLOBAL"},
+        {"indicator": "udrp_denial_rate", "description": "UDRP complaints denied (%)", "jurisdiction": "GLOBAL"},
+        {"indicator": "mediation_cases", "description": "WIPO mediation cases filed", "jurisdiction": "GLOBAL"},
+        {"indicator": "expert_determination_cases", "description": "WIPO expert determination cases", "jurisdiction": "GLOBAL"},
+        {"indicator": "arbitration_cases", "description": "WIPO arbitration cases filed", "jurisdiction": "GLOBAL"},
+        {"indicator": "cctld_cases", "description": "ccTLD domain dispute cases", "jurisdiction": "GLOBAL"},
+    ]
+
     @staticmethod
     def _clean(text: str) -> str:
         return re.sub(r"\s+", " ", text or "").strip()

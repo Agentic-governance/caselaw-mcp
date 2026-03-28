@@ -1094,7 +1094,7 @@ def get_caselaw_db_stats() -> dict:
 @mcp.tool()
 def get_judge_stats(
     judge_name: str,
-    jurisdiction: str | None = None,
+    jurisdiction: str,
     year_from: int | None = None,
     year_to: int | None = None,
 ) -> dict:
@@ -1103,7 +1103,7 @@ def get_judge_stats(
 
     Args:
         judge_name: 判事名（部分一致検索）
-        jurisdiction: 管轄フィルタ（US, JP, EU, etc.）
+        jurisdiction: 管轄フィルタ（US, JP, EU, etc.） — 必須
         year_from: 開始年フィルタ
         year_to: 終了年フィルタ
 
@@ -1113,26 +1113,25 @@ def get_judge_stats(
     """
     import json as _json
 
+    if not jurisdiction:
+        return {"error": "jurisdiction is required for judge search on large DB"}
+
     conn = _get_db()
     sql = """
         SELECT c.case_id, c.case_name, c.jurisdiction, c.court,
                c.decision_date, c.case_type, c.subject_area, c.outcome,
                c.raw_metadata
         FROM cases c
-        WHERE c.raw_metadata LIKE ?
+        WHERE c.jurisdiction = ? AND c.raw_metadata LIKE ?
     """
-    params: list = [f"%{judge_name}%"]
-
-    if jurisdiction:
-        sql += " AND c.jurisdiction = ?"
-        params.append(jurisdiction)
+    params: list = [jurisdiction, f"%{judge_name}%"]
     if year_from:
         sql += " AND c.decision_date >= ?"
         params.append(f"{year_from}-01-01")
     if year_to:
         sql += " AND c.decision_date <= ?"
         params.append(f"{year_to}-12-31")
-    sql += " ORDER BY c.decision_date DESC LIMIT 500"
+    sql += " ORDER BY c.decision_date DESC LIMIT 200"
 
     rows = conn.execute(sql, params).fetchall()
 
@@ -1441,8 +1440,10 @@ def search_cases_advanced(
         subject_area: Filter by subject (patent, copyright, trademark, data_privacy, antitrust, etc.)
         year_from: Start year filter
         year_to: End year filter
-        max_results: Maximum results to return
+        max_results: Maximum results to return (capped at 50)
     """
+    # Hard cap to prevent timeout on 84M row DB
+    max_results = min(max_results, 50)
     conn = _get_db()
     params = []
 
@@ -1484,6 +1485,15 @@ def search_cases_advanced(
                 if term.strip():
                     sql += " AND (case_name LIKE ? OR full_text LIKE ?)"
                     params.extend([f"%{term.strip()}%", f"%{term.strip()}%"])
+            # Non-FTS LIKE scan on 84M rows needs jurisdiction filter
+            if not jurisdiction:
+                return {
+                    "results": [], "count": 0,
+                    "filters": {"jurisdiction": jurisdiction, "case_type": case_type,
+                                "subject_area": subject_area},
+                    "search_mode": "like",
+                    "error": "jurisdiction filter required for LIKE-based search on large DB",
+                }
 
     if jurisdiction:
         jur_col = "c.jurisdiction" if use_fts5 else "jurisdiction"
@@ -1575,28 +1585,33 @@ def get_classification_stats() -> dict:
     """
     conn = _get_db()
 
+    # Sample from recent 1M rows to avoid full-table scan on 84M row DB
+    max_rid = conn.execute("SELECT MAX(rowid) FROM cases").fetchone()[0] or 0
+    sample_start = max(0, max_rid - 1000000)
+
     type_stats = conn.execute("""
         SELECT case_type, COUNT(*) as cnt FROM cases
-        WHERE case_type IS NOT NULL
+        WHERE case_type IS NOT NULL AND rowid > ?
         GROUP BY case_type ORDER BY cnt DESC LIMIT 50
-    """).fetchall()
+    """, (sample_start,)).fetchall()
 
     subject_stats = conn.execute("""
         SELECT subject_area, COUNT(*) as cnt FROM cases
-        WHERE subject_area IS NOT NULL
+        WHERE subject_area IS NOT NULL AND rowid > ?
         GROUP BY subject_area ORDER BY cnt DESC LIMIT 50
-    """).fetchall()
+    """, (sample_start,)).fetchall()
 
     outcome_stats = conn.execute("""
         SELECT outcome, COUNT(*) as cnt FROM cases
-        WHERE outcome IS NOT NULL
+        WHERE outcome IS NOT NULL AND rowid > ?
         GROUP BY outcome ORDER BY cnt DESC LIMIT 50
-    """).fetchall()
+    """, (sample_start,)).fetchall()
 
     return {
         "case_types": {r[0]: r[1] for r in type_stats},
         "subject_areas": {r[0]: r[1] for r in subject_stats},
         "outcomes": {r[0]: r[1] for r in outcome_stats},
+        "_note": f"Sampled from rows {sample_start}-{max_rid} (recent ~1M rows)",
     }
 
 

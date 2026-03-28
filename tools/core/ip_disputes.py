@@ -397,7 +397,10 @@ def ip_enforcement_profile(
         "raw": [],
     }
 
-    r301 = USTR301Adapter().search_disputes(query="", jurisdiction=jur, year_from=year_from, limit=5)
+    try:
+        r301 = USTR301Adapter().search_disputes(query="", jurisdiction=jur, year_from=year_from, limit=5)
+    except Exception:
+        r301 = []
     for row in r301:
         indicator = row.get("indicator", "")
         if "priority_watch" in indicator:
@@ -406,18 +409,28 @@ def ip_enforcement_profile(
             profile["special_301_status"] = "Watch List"
     profile["raw"].extend(r301)
 
-    cbp = EnforcementAdapter().search_disputes(query="share", jurisdiction=jur, year_from=year_from, limit=5)
+    try:
+        cbp = EnforcementAdapter().search_disputes(query="share", jurisdiction=jur, year_from=year_from, limit=5)
+    except Exception:
+        cbp = []
     for row in cbp:
         indicator = row.get("indicator", "")
         if "cbp" in indicator and "share" in indicator:
             profile["cbp_seizure_share"] = row.get("value")
     profile["raw"].extend(cbp)
 
-    eu = EnforcementAdapter().search_disputes(query="eu", jurisdiction=jur, year_from=year_from, limit=5)
+    try:
+        eu = EnforcementAdapter().search_disputes(query="eu", jurisdiction=jur, year_from=year_from, limit=5)
+    except Exception:
+        eu = []
     for row in eu:
         indicator = row.get("indicator", "")
         if "eu" in indicator and "share" in indicator:
             profile["eu_seizure_share"] = row.get("value")
+
+    if not profile["raw"]:
+        profile["status"] = "no_data"
+        profile["message"] = "Enforcement data currently unavailable for this jurisdiction"
 
     return profile
 
@@ -479,54 +492,80 @@ def ip_dispute_forum_comparison(
 
     results = []
     for forum in forums:
-        rows = forum["adapter"]().search_disputes(
-            query=forum["indicator"],
-            jurisdiction=forum["jurisdiction"],
-            year_from=year,
-            limit=5,
-        )
+        try:
+            rows = forum["adapter"]().search_disputes(
+                query=forum["indicator"],
+                jurisdiction=forum["jurisdiction"],
+                year_from=year,
+                limit=5,
+            )
+        except Exception:
+            results.append({
+                "forum": forum["forum"],
+                "status": "unavailable",
+                "message": f"Data source temporarily unavailable for {forum['forum']}",
+                "indicator": forum["indicator"],
+                "jurisdiction": forum["jurisdiction"],
+            })
+            continue
+        matched = False
         for row in rows:
             if row.get("indicator") == forum["indicator"] and row.get("year") == year:
                 results.append({"forum": forum["forum"], **row})
+                matched = True
                 break
-        else:
+        if not matched:
             for row in rows:
                 if row.get("indicator") == forum["indicator"]:
                     results.append({"forum": forum["forum"], **row})
+                    matched = True
                     break
+        if not matched:
+            results.append({
+                "forum": forum["forum"],
+                "status": "no_data",
+                "indicator": forum["indicator"],
+                "year": year,
+            })
 
     return results
 
 
 def ip_list_dispute_indicators() -> dict[str, list[str]]:
     """List all available dispute/enforcement indicators per source."""
+    def _get_indicators(cls):
+        seed = getattr(cls, "SEED", None)
+        if seed:
+            return [s["indicator"] for s in seed if isinstance(s, dict) and "indicator" in s]
+        return []
+
     return {
-        "wipo_adr": [s["indicator"] for s in WIPOADRAdapter().SEED],
-        "itc337": [s["indicator"] for s in ITC337Adapter().SEED],
-        "epo_opposition": [s["indicator"] for s in EPOOppositionAdapter().SEED],
-        "ptab": [s["indicator"] for s in PTABAdapter().SEED],
-        "ustr301": [s["indicator"] for s in USTR301Adapter().SEED],
-        "enforcement": [s["indicator"] for s in EnforcementAdapter().SEED],
-        "upc": [s["indicator"] for s in UPCAdapter().SEED],
-        "gipc_index": [s["indicator"] for s in GIPCIndexAdapter().SEED],
-        "euipo_opposition": [s["indicator"] for s in EUIPOOppositionAdapter().SEED],
-        "oecd_counterfeit": [s["indicator"] for s in OECDCounterfeitAdapter().SEED],
-        "wipo_madrid": [s["indicator"] for s in WIPOMadridAdapter().SEED],
-        "wipo_hague": [s["indicator"] for s in WIPOHagueAdapter().SEED],
-        "wipo_lisbon": [s["indicator"] for s in WIPOLisbonAdapter().SEED],
-        "wto_trips": [s["indicator"] for s in WTOTRIPSAdapter().SEED],
-        "court_stats": [s["indicator"] for s in CourtStatsAdapter().SEED],
-        "sep_frand": [s["indicator"] for s in SEPFRANDAdapter().SEED],
-        "upov": [s["indicator"] for s in UPOVAdapter().SEED],
-        "wipo_tech_trends": [s["indicator"] for s in WIPOTechTrendsAdapter().SEED],
-        "ieee_sa": [s["indicator"] for s in IEEESAAdapter().SEED],
-        "wipo_copyright_treaties": [s["indicator"] for s in WIPOCopyrightTreatiesAdapter().SEED],
-        "us_copyright": [s["indicator"] for s in USCopyrightAdapter().SEED],
-        "autm": [s["indicator"] for s in AUTMAdapter().SEED],
-        "ip_australia": [s["indicator"] for s in IPAustraliaAdapter().SEED],
-        "cipo": [s["indicator"] for s in CIPOAdapter().SEED],
-        "inpi_brazil": [s["indicator"] for s in INPIBrazilAdapter().SEED],
-        "ip_india": [s["indicator"] for s in IPIndiaAdapter().SEED],
-        "ipos_singapore": [s["indicator"] for s in IPOSSingaporeAdapter().SEED],
-        "de_ip_courts": [s["indicator"] for s in DEIPCourtsAdapter().SEED],
+        "wipo_adr": _get_indicators(WIPOADRAdapter),
+        "itc337": _get_indicators(ITC337Adapter),
+        "epo_opposition": _get_indicators(EPOOppositionAdapter),
+        "ptab": _get_indicators(PTABAdapter),
+        "ustr301": _get_indicators(USTR301Adapter),
+        "enforcement": _get_indicators(EnforcementAdapter),
+        "upc": _get_indicators(UPCAdapter),
+        "gipc_index": _get_indicators(GIPCIndexAdapter),
+        "euipo_opposition": _get_indicators(EUIPOOppositionAdapter),
+        "oecd_counterfeit": _get_indicators(OECDCounterfeitAdapter),
+        "wipo_madrid": _get_indicators(WIPOMadridAdapter),
+        "wipo_hague": _get_indicators(WIPOHagueAdapter),
+        "wipo_lisbon": _get_indicators(WIPOLisbonAdapter),
+        "wto_trips": _get_indicators(WTOTRIPSAdapter),
+        "court_stats": _get_indicators(CourtStatsAdapter),
+        "sep_frand": _get_indicators(SEPFRANDAdapter),
+        "upov": _get_indicators(UPOVAdapter),
+        "wipo_tech_trends": _get_indicators(WIPOTechTrendsAdapter),
+        "ieee_sa": _get_indicators(IEEESAAdapter),
+        "wipo_copyright_treaties": _get_indicators(WIPOCopyrightTreatiesAdapter),
+        "us_copyright": _get_indicators(USCopyrightAdapter),
+        "autm": _get_indicators(AUTMAdapter),
+        "ip_australia": _get_indicators(IPAustraliaAdapter),
+        "cipo": _get_indicators(CIPOAdapter),
+        "inpi_brazil": _get_indicators(INPIBrazilAdapter),
+        "ip_india": _get_indicators(IPIndiaAdapter),
+        "ipos_singapore": _get_indicators(IPOSSingaporeAdapter),
+        "de_ip_courts": _get_indicators(DEIPCourtsAdapter),
     }
