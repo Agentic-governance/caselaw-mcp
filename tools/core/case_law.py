@@ -86,21 +86,31 @@ def _search_fts5(
     fts_query = " ".join(safe_terms)
     params: list = [fts_query]
 
-    # Performance fix: limit FTS5 subquery for broad searches
-    fts_limit = 1000 if not jurisdiction else 10000
-
-    sql = """SELECT c.case_id, c.case_name, c.jurisdiction, c.court,
-                    c.decision_date, c.case_type, c.subject_area,
-                    c.outcome, c.importance_score, c.has_content,
-                    c.summary, 0 as score
-             FROM cases c
-             WHERE c.rowid IN (
-                 SELECT rowid FROM cases_fts WHERE cases_fts MATCH ?
-                 ORDER BY rank LIMIT """ + str(fts_limit) + ")"
-
+    # When jurisdiction is specified, use a different strategy:
+    # Search within jurisdiction first (much faster for non-US jurisdictions)
     if jurisdiction:
-        sql += " AND c.jurisdiction = ?"
-        params.append(jurisdiction.strip().upper())
+        jur_upper = jurisdiction.strip().upper()
+        sql = """SELECT c.case_id, c.case_name, c.jurisdiction, c.court,
+                        c.decision_date, c.case_type, c.subject_area,
+                        c.outcome, c.importance_score, c.has_content,
+                        c.summary, 0 as score
+                 FROM cases c
+                 WHERE c.jurisdiction = ?
+                 AND c.has_content = 1
+                 AND c.rowid IN (
+                     SELECT rowid FROM cases_fts WHERE cases_fts MATCH ?
+                 )"""
+        params = [jur_upper, fts_query]
+    else:
+        sql = """SELECT c.case_id, c.case_name, c.jurisdiction, c.court,
+                        c.decision_date, c.case_type, c.subject_area,
+                        c.outcome, c.importance_score, c.has_content,
+                        c.summary, 0 as score
+                 FROM cases c
+                 WHERE c.rowid IN (
+                     SELECT rowid FROM cases_fts WHERE cases_fts MATCH ?
+                     ORDER BY rank LIMIT 1000
+                 )"""
     if year_from:
         sql += " AND c.decision_date >= ?"
         params.append(f"{year_from}-01-01")
