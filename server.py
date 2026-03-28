@@ -243,24 +243,42 @@ def search_cases_global(
             "jurisdictions_searched": list[str]
         }
     """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
     if jurisdictions is None:
         jurisdictions = ["US", "GB", "EU", "JP", "AU"]
 
     all_results = {}
     total = 0
 
-    for jur in jurisdictions:
+    def _search_one(jur: str) -> tuple:
         try:
             result = search_cases(
                 query=query,
                 jurisdiction=jur,
                 max_results=max_results_per_jurisdiction,
             )
-            cases = result.get("results", [])
-            all_results[jur] = cases
-            total += len(cases)
+            return jur, result.get("results", [])
         except Exception as e:
-            all_results[jur] = {"error": str(e)}
+            return jur, {"error": str(e)}
+
+    # Run all jurisdiction searches in parallel (cap at 20s total)
+    try:
+        with ThreadPoolExecutor(max_workers=min(len(jurisdictions), 8)) as pool:
+            futures = {pool.submit(_search_one, j): j for j in jurisdictions}
+            for fut in as_completed(futures, timeout=20):
+                try:
+                    jur, cases = fut.result(timeout=10)
+                    all_results[jur] = cases
+                    if isinstance(cases, list):
+                        total += len(cases)
+                except Exception as e:
+                    jur = futures[fut]
+                    all_results[jur] = {"error": str(e)}
+    except Exception as e:
+        for jur in jurisdictions:
+            if jur not in all_results:
+                all_results[jur] = {"error": f"Search timed out: {e}"}
 
     return {
         "results": all_results,
@@ -385,17 +403,32 @@ def find_similar_cases(
             "search_jurisdiction": str
         }
     """
+    # Extract key terms from the text for FTS5 (long text produces bad matches)
+    words = text.split()
+    key_words = [w for w in words if len(w) > 2][:8]
+    query = " ".join(key_words) if key_words else text[:100]
+
     if jurisdiction == "ALL":
         # Search across multiple major jurisdictions
-        return search_cases_global(
-            query=text,
+        global_result = search_cases_global(
+            query=query,
             jurisdictions=["US", "GB", "EU", "JP", "AU", "CA"],
-            max_results_per_jurisdiction=max_results // 6,
+            max_results_per_jurisdiction=max(max_results // 6, 2),
         )
+        # Flatten results into similar_cases format
+        similar = []
+        for jur, cases in global_result.get("results", {}).items():
+            if isinstance(cases, list):
+                similar.extend(cases)
+        return {
+            "similar_cases": similar[:max_results],
+            "query_text": query,
+            "search_jurisdiction": "ALL",
+        }
     else:
         # Single jurisdiction search
         result = search_cases(
-            query=text,
+            query=query,
             jurisdiction=jurisdiction,
             max_results=max_results,
         )
@@ -446,7 +479,67 @@ def analyze_legal_trend(
 
     cases = results if isinstance(results, list) else results.get("cases", [])
 
-    # Sort by importance_score to find landmark cases
+    # Enrich cases with computed importance scores
+    # The importance_score column is mostly NULL/0 in the DB, so we compute
+    # a score from: (1) outgoing citation count, (2) text length, (3) has_content
+    try:
+        from tools.storage import get_connection as _get_db
+        conn = _get_db()
+
+        for c in cases:
+            cid = c.get("case_id")
+            score = 0.0
+            cite_count = 0
+            if cid:
+                # Outgoing citations (how many cases THIS case cites) — more reliably populated
+                try:
+                    row = conn.execute(
+                        "SELECT COUNT(*) FROM case_citations WHERE citing_case_id = ?",
+                        [cid],
+                    ).fetchone()
+                    cite_count = row[0] if row else 0
+                    score += cite_count * 0.5
+                except Exception:
+                    pass
+
+                # Incoming citations (how many cases cite THIS case)
+                try:
+                    row = conn.execute(
+                        "SELECT COUNT(*) FROM case_citations WHERE cited_case_id = ?",
+                        [cid],
+                    ).fetchone()
+                    incoming = row[0] if row else 0
+                    cite_count += incoming
+                    score += incoming * 2.0  # Incoming citations weighted higher
+                except Exception:
+                    pass
+
+            # Text length bonus (longer opinions tend to be more significant)
+            text_len = len(c.get("summary") or "")
+            if c.get("has_content"):
+                score += 5.0
+            if text_len > 1000:
+                score += 3.0
+            elif text_len > 200:
+                score += 1.0
+
+            # Base importance from DB (if any)
+            base = c.get("importance_score") or 0
+            c["importance_score"] = round(base + score, 1)
+            c["citation_count"] = cite_count
+
+        conn.close()
+    except Exception:
+        # If DB access fails, use simple heuristics
+        for c in cases:
+            base = c.get("importance_score") or 0
+            text_len = len(c.get("summary") or "")
+            bonus = 5.0 if c.get("has_content") else 0
+            bonus += 3.0 if text_len > 1000 else (1.0 if text_len > 200 else 0)
+            c["importance_score"] = round(base + bonus, 1)
+            c["citation_count"] = 0
+
+    # Sort by enriched importance_score to find landmark cases
     scored_cases = sorted(cases, key=lambda c: c.get("importance_score") or 0, reverse=True)
 
     # key_developments: top cases by importance with citation-based scoring
@@ -454,9 +547,10 @@ def analyze_legal_trend(
     for c in scored_cases[:10]:
         name = c.get("case_name") or c.get("title") or ""
         score = c.get("importance_score") or 0
+        cite_ct = c.get("citation_count", 0)
         year = c.get("year") or c.get("decision_date", "")[:4] if c.get("decision_date") else ""
         if name:
-            key_devs.append(f"{name} ({year}, importance: {score})")
+            key_devs.append(f"{name} ({year}, importance: {score}, citations: {cite_ct})")
     if not key_devs:
         key_devs = [c.get("case_name") or c.get("title") or "unnamed" for c in cases[:5]]
 
@@ -464,7 +558,6 @@ def analyze_legal_trend(
     landmark = []
     for c in scored_cases[:10]:
         entry = dict(c)
-        entry["importance_score"] = entry.get("importance_score") or 0
         landmark.append(entry)
 
     return {
