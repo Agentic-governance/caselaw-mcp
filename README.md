@@ -1,14 +1,14 @@
 <p align="center">
-  <img src="https://img.shields.io/badge/Cases-84M%2B-blue?style=for-the-badge&logo=data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJ3aGl0ZSI+PHBhdGggZD0iTTEyIDJMMyA3djEwbDkgNSA5LTVWN2wtOS01eiIvPjwvc3ZnPg==" alt="Cases">
-  <img src="https://img.shields.io/badge/Jurisdictions-90%2B-green?style=for-the-badge" alt="Jurisdictions">
-  <img src="https://img.shields.io/badge/Citations-172M%2B-orange?style=for-the-badge" alt="Citations">
+  <img src="https://img.shields.io/badge/Cases-85.7M-blue?style=for-the-badge&logo=data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJ3aGl0ZSI+PHBhdGggZD0iTTEyIDJMMyA3djEwbDkgNSA5LTVWN2wtOS01eiIvPjwvc3ZnPg==" alt="Cases">
+  <img src="https://img.shields.io/badge/Jurisdictions-90-green?style=for-the-badge" alt="Jurisdictions">
+  <img src="https://img.shields.io/badge/Citations-245M-orange?style=for-the-badge" alt="Citations">
   <img src="https://img.shields.io/badge/MCP_Tools-39-purple?style=for-the-badge" alt="Tools">
   <img src="https://img.shields.io/badge/License-MIT-yellow?style=for-the-badge" alt="License">
 </p>
 
 # ⚖️ Caselaw MCP
 
-**World's largest open caselaw database with 84M+ judicial decisions from 90 jurisdictions.**
+**World's largest open caselaw database with 85.7M judicial decisions from 90 jurisdictions.**
 
 Search, analyze, and cross-reference the world's case law through the Model Context Protocol. Built for AI-assisted legal research.
 
@@ -25,9 +25,9 @@ Search, analyze, and cross-reference the world's case law through the Model Cont
 
 | Metric | Value |
 |--------|-------|
-| 📚 **Total cases** | 84,000,000+ |
-| 🌍 **Jurisdictions** | 90+ |
-| 🔗 **Citation links** | 172,000,000+ |
+| 📚 **Total cases** | 85,700,000+ |
+| 🌍 **Jurisdictions** | 90 |
+| 🔗 **Citation links** | 245,000,000+ |
 | 🗣️ **Languages** | 20+ |
 | 💾 **Database size** | 705 GB |
 | 🔧 **MCP tools** | 39 |
@@ -36,9 +36,9 @@ Search, analyze, and cross-reference the world's case law through the Model Cont
 
 ## ✨ Features
 
-- 🔍 **FTS5 full-text search** — BM25-ranked search across 84M+ cases
+- 🔍 **FTS5 full-text search** — BM25-ranked search across 85.7M cases
 - 🌐 **Multi-jurisdiction research** — 90 jurisdictions from every continent
-- 🔗 **Citation network analysis** — 172M+ citation links with graph traversal
+- 🔗 **Citation network analysis** — 245M+ citation links with graph traversal
 - ⚖️ **Legal risk assessment** — Factor-based risk scoring with case law backing
 - 📊 **Comparative law analysis** — Side-by-side jurisdiction comparison
 - 🏛️ **IP/patent dispute research** — UDRP, Section 337, EPO, PTAB data
@@ -85,7 +85,7 @@ docker-compose up -d
 
 The server starts on port `8006` with MCP endpoint at `/mcp`.
 
-> **Note:** Self-hosting requires providing your own SQLite database at `/mnt/nvme/caselaw-data/caselaw.db` (mounted via volume). The full 705 GB database is not included in the repository.
+> **Note:** Self-hosting requires providing your own SQLite database at `/mnt/nvme/caselaw-data/caselaw.db` (mounted via volume). The full database is not included in the repository.
 
 ---
 
@@ -162,22 +162,24 @@ The server starts on port `8006` with MCP endpoint at `/mcp`.
 
 ---
 
-## 🌍 Data Sources
+## 🌍 Data Coverage
 
-### Top Jurisdictions by Case Count
+### Top 20 Jurisdictions by Case Count
 
-| Jurisdiction | Cases | Jurisdiction | Cases |
-|:-------------|------:|:-------------|------:|
-| 🇨🇳 China | 45,000,000 | 🇰🇷 South Korea | 513,000 |
-| 🇺🇸 United States | 30,600,000 | 🇦🇷 Argentina | 496,000 |
-| 🇧🇷 Brazil | 1,800,000 | 🇦🇺 Australia | 491,000 |
-| 🇫🇷 France | 1,200,000 | 🇵🇱 Poland | 438,000 |
-| 🇨🇭 Switzerland | 1,100,000 | 🇨🇦 Canada | 405,000 |
-| 🇹🇷 Turkey | 714,000 | 🇳🇱 Netherlands | 340,000 |
-| 🇩🇪 Germany | 251,000 | 🇨🇿 Czech Republic | 238,000 |
-| 🇪🇺 EU Courts | 188,000 | 🇬🇧 United Kingdom | 113,000 |
-| 🇮🇳 India | 114,000 | 🇹🇼 Taiwan | 56,000 |
-| 🇯🇵 Japan | 52,000 | *+ 70 more...* | |
+| # | Jurisdiction | Cases | # | Jurisdiction | Cases |
+|--:|:-------------|------:|--:|:-------------|------:|
+| 1 | 🇨🇳 China | 45,500,000 | 11 | 🇦🇺 Australia | 491,000 |
+| 2 | 🇺🇸 United States | 30,600,000 | 12 | 🇵🇱 Poland | 438,000 |
+| 3 | 🇧🇷 Brazil | 1,800,000 | 13 | 🇨🇦 Canada | 405,000 |
+| 4 | 🇫🇷 France | 1,200,000 | 14 | 🇳🇱 Netherlands | 340,000 |
+| 5 | 🇨🇭 Switzerland | 1,100,000 | 15 | 🇩🇪 Germany | 251,000 |
+| 6 | 🇹🇷 Turkey | 714,000 | 16 | 🇨🇿 Czech Republic | 238,000 |
+| 7 | 🇰🇷 South Korea | 513,000 | 17 | 🇪🇺 EU Courts | 188,000 |
+| 8 | 🇦🇷 Argentina | 496,000 | 18 | 🇬🇧 United Kingdom | 175,000 |
+| 9 | 🇮🇳 India | 122,000 | 19 | 🇹🇼 Taiwan | 77,000 |
+| 10 | 🇯🇵 Japan | 92,000 | 20 | 🇨🇴 Colombia | 24,000 |
+
+*...plus 70 more jurisdictions across every continent.*
 
 ### Data Source Coverage
 
@@ -205,10 +207,10 @@ Claude / AI Agent
 │   FastMCP Server     │  Python 3.13
 │   (server.py)        │  39 registered tools
 ├──────────────────────┤
-│   SQLite + FTS5      │  84M cases, WAL mode
+│   SQLite + FTS5      │  85.7M cases, WAL mode
 │   (caselaw.db)       │  BM25 ranking
 ├──────────────────────┤
-│   Citation Graph     │  172M+ edges
+│   Citation Graph     │  245M+ edges
 │   (NetworkX)         │  Depth-traversal queries
 ├──────────────────────┤
 │   98 API Adapters    │  External legal databases
@@ -223,7 +225,7 @@ Claude / AI Agent
 
 **Key design decisions:**
 
-- **SQLite + FTS5** for full-text search with BM25 ranking over 705 GB of case law
+- **SQLite + FTS5** for full-text search with BM25 ranking over 85.7M cases
 - **WAL mode** with `busy_timeout=30000` for concurrent read access
 - **FastMCP** for MCP protocol compliance with StreamableHTTP transport
 - **Docker** container with 4 GB memory limit, health-checked
@@ -264,7 +266,7 @@ async with Client("https://caselaw.patent-space.dev/mcp") as client:
 
 - Docker and Docker Compose
 - SQLite database with the caselaw schema
-- ~705 GB disk space (for full database)
+- Sufficient disk space for the SQLite database
 
 ### Environment
 
