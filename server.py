@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import time
 
 from fastmcp import FastMCP
 
@@ -29,6 +30,61 @@ from events.detector import EventDetector
 
 mcp = FastMCP("legal-mcp")
 
+# ── Server startup time for uptime tracking ──
+_SERVER_START_TIME = time.time()
+
+# ── Known jurisdictions (from DB) ──
+KNOWN_JURISDICTIONS = {
+    "AF", "AR", "AS", "AT", "AU", "BD", "BR", "BW", "CA", "CH",
+    "CK", "CN", "CO", "CZ", "DE", "DK", "EC", "EE", "ES", "ET",
+    "EU", "FJ", "FM", "FR", "GB", "GH", "GR", "GU", "HK", "HR",
+    "ICJ", "ID", "IE", "IL", "IN", "IT", "JP", "KE", "KI", "KR",
+    "LK", "LS", "LT", "LV", "MG", "MH", "MP", "MU", "MW", "MX",
+    "MY", "MZ", "NA", "NC", "NG", "NL", "NO", "NR", "NU", "NZ",
+    "PG", "PH", "PK", "PL", "PN", "PT", "PW", "RO", "RW", "SB",
+    "SC", "SE", "SG", "SL", "SZ", "TK", "TO", "TR", "TV", "TW",
+    "TZ", "UG", "US", "WI", "WIPO", "WS", "ZA", "ZM", "ZW",
+    "ALL", "global",
+}
+
+
+def _validate_jurisdiction(jurisdiction: str) -> str | None:
+    """Return error message if jurisdiction is invalid, else None."""
+    if jurisdiction.upper() not in KNOWN_JURISDICTIONS and jurisdiction not in KNOWN_JURISDICTIONS:
+        sorted_jurs = sorted(j for j in KNOWN_JURISDICTIONS if j not in ("ALL", "global"))
+        return (
+            f"Unknown jurisdiction '{jurisdiction}'. "
+            f"Available jurisdictions ({len(sorted_jurs)}): {', '.join(sorted_jurs)}. "
+            f"Use 'ALL' or 'global' for cross-jurisdiction search."
+        )
+    return None
+
+
+def _suggest_alternatives(query: str, jurisdiction: str) -> list[str]:
+    """Suggest alternative queries when search returns 0 results."""
+    suggestions = []
+    words = query.strip().split()
+    if len(words) > 3:
+        suggestions.append(f"Try fewer keywords: '{' '.join(words[:3])}'")
+    if len(words) == 1 and len(words[0]) > 8:
+        suggestions.append("Try a shorter or more common term")
+    if jurisdiction != "ALL":
+        suggestions.append("Try searching across all jurisdictions with jurisdiction='ALL'")
+    suggestions.append("Try broader terms or synonyms")
+    suggestions.append("Check spelling of party names or legal terms")
+    return suggestions
+
+
+def _timeout_suggestions() -> list[str]:
+    """Suggestions when a query times out."""
+    return [
+        "Narrow the search by specifying a jurisdiction",
+        "Use fewer or more specific keywords",
+        "Add a date range (year_from / year_to) to limit results",
+        "Reduce max_results to return fewer rows",
+    ]
+
+
 # ── Entity registry (initialized once at startup) ──
 _entity_registry = EntityRegistry()
 for _e in SEED_ENTITIES:
@@ -49,13 +105,31 @@ def tool_search_case_law(
     year_to: int | None = None,
 ):
     """Search case law across jurisdiction/topic/keywords/year range."""
-    return search_case_law(
-        jurisdiction=jurisdiction,
-        topic=topic,
-        keywords=keywords,
-        year_from=year_from,
-        year_to=year_to,
-    )
+    jur_err = _validate_jurisdiction(jurisdiction)
+    if jur_err:
+        return {"error": jur_err, "cases": []}
+
+    try:
+        result = search_case_law(
+            jurisdiction=jurisdiction,
+            topic=topic,
+            keywords=keywords,
+            year_from=year_from,
+            year_to=year_to,
+        )
+        cases = result if isinstance(result, list) else result.get("cases", [])
+        if len(cases) == 0:
+            query_str = topic + (" " + " ".join(keywords) if keywords else "")
+            return {
+                "cases": [],
+                "count": 0,
+                "suggestions": _suggest_alternatives(query_str, jurisdiction),
+            }
+        return result
+    except Exception as e:
+        if "timeout" in str(e).lower() or "busy" in str(e).lower():
+            return {"error": f"Query timed out: {e}", "suggestions": _timeout_suggestions(), "cases": []}
+        return {"error": f"Search failed: {e}", "cases": []}
 
 
 @mcp.tool()
@@ -122,18 +196,30 @@ async def search_cases(
             "jurisdiction": str
         }
     """
-    # Delegate to existing core function (returns list[dict])
-    results = search_case_law(
-        jurisdiction=jurisdiction,
-        topic=legal_area or query,
-        keywords=[query] if query else None,
-    )
-    cases = results if isinstance(results, list) else results.get("cases", [])
-    return {
-        "results": cases[:max_results],
-        "count": len(cases),
-        "jurisdiction": jurisdiction,
-    }
+    # Validate jurisdiction
+    jur_err = _validate_jurisdiction(jurisdiction)
+    if jur_err:
+        return {"error": jur_err, "results": [], "count": 0}
+
+    try:
+        results = search_case_law(
+            jurisdiction=jurisdiction,
+            topic=legal_area or query,
+            keywords=[query] if query else None,
+        )
+        cases = results if isinstance(results, list) else results.get("cases", [])
+        response = {
+            "results": cases[:max_results],
+            "count": len(cases),
+            "jurisdiction": jurisdiction,
+        }
+        if len(cases) == 0:
+            response["suggestions"] = _suggest_alternatives(query, jurisdiction)
+        return response
+    except Exception as e:
+        if "timeout" in str(e).lower() or "busy" in str(e).lower():
+            return {"error": f"Query timed out: {e}", "suggestions": _timeout_suggestions(), "results": [], "count": 0}
+        return {"error": f"Search failed: {e}", "results": [], "count": 0}
 
 
 @mcp.tool()
@@ -208,30 +294,73 @@ async def get_case_detail(
             "source_url": str
         }
     """
-    # Use search with case_id as query to retrieve specific case
-    results = search_case_law(
-        jurisdiction=jurisdiction,
-        topic=case_id,
-        keywords=[case_id],
-    )
+    # Validate jurisdiction
+    jur_err = _validate_jurisdiction(jurisdiction)
+    if jur_err:
+        return {"error": jur_err}
 
-    cases = results if isinstance(results, list) else results.get("cases", [])
-    if not cases:
-        return {"error": f"Case {case_id} not found in {jurisdiction}"}
+    # Validate case_id format
+    if not case_id or not case_id.strip():
+        return {"error": "case_id must be a non-empty string"}
+    if len(case_id) > 500:
+        return {"error": "case_id is too long (max 500 chars). Provide a valid case identifier."}
 
-    # Return first match with full details
-    case = cases[0]
-    return {
-        "case_id": case.get("case_id", case_id),
-        "title": case.get("title", ""),
-        "full_text": case.get("text", ""),
-        "summary": case.get("summary", case.get("text", "")[:500]),
-        "date": case.get("date", ""),
-        "court": case.get("court", ""),
-        "parties": case.get("parties", []),
-        "citations": case.get("citations", []),
-        "source_url": case.get("source_url", ""),
-    }
+    # Direct DB lookup by case_id (primary) with jurisdiction filter
+    try:
+        conn = _get_db()
+        row = conn.execute(
+            "SELECT case_id, case_name, jurisdiction, court, decision_date, "
+            "full_text, summary, source_url, case_number "
+            "FROM cases WHERE case_id = ?",
+            [case_id],
+        ).fetchone()
+
+        if not row:
+            # Try searching by case_id as substring (some IDs have prefix variations)
+            row = conn.execute(
+                "SELECT case_id, case_name, jurisdiction, court, decision_date, "
+                "full_text, summary, source_url, case_number "
+                "FROM cases WHERE case_id LIKE ? AND jurisdiction = ? LIMIT 1",
+                [f"%{case_id}%", jurisdiction],
+            ).fetchone()
+
+        if not row:
+            return {
+                "error": f"Case {case_id} not found in {jurisdiction}",
+                "suggestions": [
+                    f"Verify the case_id format for {jurisdiction}",
+                    "Try searching by case name using search_cases_advanced instead",
+                    "Check if the jurisdiction is correct",
+                ],
+            }
+
+        # Get citations for this case
+        citations = conn.execute(
+            "SELECT cited_reference FROM case_citations "
+            "WHERE citing_case_id = ? AND cited_reference IS NOT NULL LIMIT 50",
+            [row["case_id"]],
+        ).fetchall()
+        cite_list = [r["cited_reference"][:200] for r in citations]
+
+        text = row["full_text"] or ""
+        return {
+            "case_id": row["case_id"],
+            "title": row["case_name"] or "",
+            "case_number": row["case_number"] or "",
+            "full_text": text[:50000],  # Cap at 50K chars
+            "summary": row["summary"] or text[:500],
+            "date": row["decision_date"] or "",
+            "court": row["court"] or "",
+            "jurisdiction": row["jurisdiction"] or "",
+            "parties": [],
+            "citations": cite_list,
+            "source_url": row["source_url"] or "",
+            "text_length": len(text),
+        }
+    except Exception as e:
+        if "timeout" in str(e).lower() or "busy" in str(e).lower():
+            return {"error": f"Query timed out: {e}", "suggestions": _timeout_suggestions()}
+        return {"error": f"Lookup failed: {e}"}
 
 
 @mcp.tool()
@@ -1207,6 +1336,18 @@ async def compare_jurisdictions(
     Returns:
         dict: per-jurisdiction stats, comparison summary, timeline
     """
+    # Validate at least 2 jurisdictions
+    if not jurisdictions or len(jurisdictions) < 2:
+        return {
+            "error": "At least 2 jurisdictions are required for comparison.",
+            "example": 'compare_jurisdictions(topic="copyright", jurisdictions=["US", "EU", "JP"])',
+        }
+
+    # Validate each jurisdiction
+    invalid = [j for j in jurisdictions if _validate_jurisdiction(j)]
+    if invalid:
+        return {"error": _validate_jurisdiction(invalid[0])}
+
     conn = _get_db()
     comparison = {}
 
@@ -1302,6 +1443,7 @@ def get_citation_network(
 
     BFSで引用チェーンを辿り、ノード（判例）とエッジ（引用関係）を返す。
     ハブ判例（被引用数が多い）の特定も行う。
+    未解決の引用（cited_case_id=NULL）もcited_referenceとして返す。
 
     Args:
         case_id: 起点となる判例ID（例: "US:cl:12345"）
@@ -1309,13 +1451,14 @@ def get_citation_network(
         max_nodes: ネットワーク内の最大ノード数
 
     Returns:
-        dict: nodes (判例メタデータ), edges (引用関係), hub_nodes (被引用数上位)
+        dict: nodes, edges, hub_nodes, unresolved_citations
     """
     conn = _get_db()
     depth = min(depth, 3)
 
     nodes: dict[str, dict] = {}
     edges: list[dict] = []
+    unresolved: list[dict] = []  # Citations with no resolved case_id
     frontier = {case_id}
     visited: set[str] = set()
 
@@ -1345,7 +1488,7 @@ def get_citation_network(
                         "depth": d,
                     }
 
-            # Forward citations (cases that cite this case)
+            # Forward citations (cases that cite this case) — resolved
             citing = conn.execute(
                 "SELECT citing_case_id FROM case_citations WHERE cited_case_id = ? LIMIT ?",
                 [cid, max_nodes],
@@ -1356,16 +1499,27 @@ def get_citation_network(
                 if src not in visited and len(nodes) < max_nodes:
                     next_frontier.add(src)
 
-            # Backward citations (cases cited by this case)
-            cited = conn.execute(
-                "SELECT cited_case_id FROM case_citations WHERE citing_case_id = ? AND cited_case_id IS NOT NULL LIMIT ?",
-                [cid, max_nodes],
+            # Backward citations — both resolved AND unresolved
+            cited_all = conn.execute(
+                "SELECT cited_case_id, cited_reference, citation_context FROM case_citations WHERE citing_case_id = ? LIMIT ?",
+                [cid, max_nodes * 2],
             ).fetchall()
-            for r in cited:
-                tgt = r["cited_case_id"]
-                edges.append({"source": cid, "target": tgt, "type": "cites"})
-                if tgt not in visited and len(nodes) < max_nodes:
-                    next_frontier.add(tgt)
+            for r in cited_all:
+                if r["cited_case_id"]:
+                    # Resolved citation
+                    tgt = r["cited_case_id"]
+                    edges.append({"source": cid, "target": tgt, "type": "cites"})
+                    if tgt not in visited and len(nodes) < max_nodes:
+                        next_frontier.add(tgt)
+                elif r["cited_reference"]:
+                    # Unresolved citation — include reference text
+                    ref_text = r["cited_reference"]
+                    ctx = r["citation_context"] or ""
+                    unresolved.append({
+                        "citing_case_id": cid,
+                        "cited_reference": ref_text[:500],
+                        "context": ctx[:300] if ctx else "",
+                    })
 
         # Fetch metadata for new frontier nodes
         for fid in next_frontier:
@@ -1402,17 +1556,28 @@ def get_citation_network(
 
     hub_nodes = sorted(cite_counts.items(), key=lambda x: -x[1])[:10]
 
+    # Deduplicate unresolved citations
+    seen_refs: set[str] = set()
+    unique_unresolved = []
+    for u in unresolved:
+        ref = u["cited_reference"]
+        if ref not in seen_refs:
+            seen_refs.add(ref)
+            unique_unresolved.append(u)
+
     return {
         "center": case_id,
         "depth": depth,
         "node_count": len(nodes),
         "edge_count": len(unique_edges),
+        "unresolved_citation_count": len(unique_unresolved),
         "nodes": list(nodes.values()),
         "edges": unique_edges,
         "hub_nodes": [
             {"case_id": cid, "cited_by_count": cnt, **nodes.get(cid, {})}
             for cid, cnt in hub_nodes
         ],
+        "unresolved_citations": unique_unresolved[:50],
     }
 
 
@@ -1713,6 +1878,67 @@ def search_statutes_v2(
         d.pop("score", None)
         results.append(d)
     return {"results": results, "count": len(results), "search_mode": "fts5" if use_fts5 else "like"}
+
+
+
+# ═══════════════════════════════════════════════════════════════
+# Health Check Tool
+# ═══════════════════════════════════════════════════════════════
+
+
+@mcp.tool()
+def health_check() -> dict:
+    """
+    Return server health status including DB stats, uptime, and FTS5 index state.
+
+    Returns:
+        dict: status, total_cases, jurisdictions, citations, fts5_indexed, last_updated, uptime_seconds
+    """
+    import datetime as _dt
+
+    uptime = int(time.time() - _SERVER_START_TIME)
+
+    try:
+        conn = _get_db()
+
+        # Fast total estimate via MAX(rowid)
+        total_cases = conn.execute("SELECT MAX(rowid) FROM cases").fetchone()[0] or 0
+
+        # Jurisdiction count (use KNOWN_JURISDICTIONS constant for speed;
+        # COUNT(DISTINCT) on 85M rows is too slow even with rowid sampling)
+        jur_count = len(KNOWN_JURISDICTIONS) - 2  # exclude ALL and global
+
+        # Citation count estimate
+        try:
+            citations = conn.execute("SELECT MAX(rowid) FROM case_citations").fetchone()[0] or 0
+        except Exception:
+            citations = 0
+
+        # FTS5 check
+        try:
+            conn.execute("SELECT 1 FROM cases_fts LIMIT 0")
+            fts5_indexed = True
+        except Exception:
+            fts5_indexed = False
+
+        conn.close()
+
+        return {
+            "status": "healthy",
+            "total_cases": total_cases,
+            "jurisdictions": jur_count,
+            "citations": citations,
+            "fts5_indexed": fts5_indexed,
+            "last_updated": _dt.date.today().isoformat(),
+            "uptime_seconds": uptime,
+        }
+
+    except Exception as e:
+        return {
+            "status": "degraded",
+            "error": str(e),
+            "uptime_seconds": uptime,
+        }
 
 
 def parse_args() -> argparse.Namespace:
