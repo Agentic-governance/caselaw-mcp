@@ -253,14 +253,11 @@ def search_cases_global(
 
     def _search_one(jur: str) -> tuple:
         try:
-            result = search_cases(
-                query=query,
-                jurisdiction=jur,
-                max_results=max_results_per_jurisdiction,
-            )
-            return jur, result.get("results", [])
+            from tools.core.case_law import _search_fts5
+            cases = _search_fts5(query, jur, max_results=max_results_per_jurisdiction)
+            return jur, cases
         except Exception as e:
-            return jur, {"error": str(e)}
+            return jur, []
 
     # Run all jurisdiction searches in parallel (cap at 20s total)
     try:
