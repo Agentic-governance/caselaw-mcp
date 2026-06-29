@@ -3,7 +3,42 @@
 from __future__ import annotations
 
 import argparse
+import os
 import time
+
+
+def _load_env_file() -> None:
+    """Load .env (e.g. COURTLISTENER_API_TOKEN) so the live-fetch fallbacks work
+    when the local corpus lacks a case. Prefer python-dotenv; fall back to a
+    minimal parser so a missing optional dependency never disables the token.
+    A missing .env is a no-op. Never raises — startup must not depend on this.
+    """
+    try:
+        from dotenv import load_dotenv
+
+        load_dotenv()
+        return
+    except Exception:
+        pass
+    try:
+        env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+        if not os.path.exists(env_path):
+            return
+        with open(env_path, "r", encoding="utf-8") as fh:
+            for raw in fh:
+                line = raw.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, _, val = line.partition("=")
+                key = key.strip()
+                val = val.strip().strip('"').strip("'")
+                if key and key not in os.environ:
+                    os.environ[key] = val
+    except Exception:
+        pass
+
+
+_load_env_file()
 
 from fastmcp import FastMCP
 
@@ -204,7 +239,13 @@ def search_cases(
     try:
         results = search_case_law(
             jurisdiction=jurisdiction,
-            topic=legal_area or query,
+            # Do NOT fold `legal_area` into `topic`. `topic` is applied as a
+            # mandatory full-text term, so `legal_area or query` injected the
+            # area word (e.g. "ip") as a required AND-term and zeroed out real
+            # matches. Search on the user's query only; `legal_area` is a soft
+            # hint, not a hard FTS constraint (proper subject filtering would be
+            # a separate change in case_law.py).
+            topic=query,
             keywords=[query] if query else None,
         )
         cases = results if isinstance(results, list) else results.get("cases", [])

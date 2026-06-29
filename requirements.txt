@@ -25,5 +25,8 @@ scipy>=1.11.0
 pyjwt>=2.0.0
 cryptography>=41.0.0
 
+# Environment / config (.env loading for live-fetch API tokens)
+python-dotenv>=1.0.0
+
 # Testing
 pytest>=7.4.0

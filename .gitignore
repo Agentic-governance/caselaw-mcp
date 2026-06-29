@@ -1,5 +1,7 @@
 data/caselaw.db
 data/cache/
+.env
+.env.*
 *.pyc
 __pycache__/
 *.db-wal

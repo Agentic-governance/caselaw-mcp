@@ -684,6 +684,30 @@ class JPCourtsAdapter(BaseAdapter):
             rows = [r for r in rows if int(r["year"]) >= year_from]
         return rows[:limit]
 
+    def _matches_query(self, norm: dict[str, Any], query: str) -> bool:
+        """True only if the scraped case actually mentions a query token.
+
+        courts.go.jp's listing page ignores GET query params and returns recent
+        featured cases, so scraped seeds must be relevance-filtered — otherwise
+        the tool reports unrelated cases (e.g. 所得税/宗教法人) as matches for a
+        copyright query. Keep a case only when its name/summary/text contains at
+        least one query token (>= 2 chars). A false "match" is worse than an
+        honest miss.
+        """
+        tokens = [t for t in self._tokenize_keywords(query) if len(t) >= 2]
+        if not tokens:
+            return False
+        haystack = " ".join(
+            [
+                str(norm.get("case_name", "")),
+                str(norm.get("summary", "")),
+                str(norm.get("text", "")),
+            ]
+        ).lower()
+        if not haystack.strip():
+            return False
+        return any(t.lower() in haystack for t in tokens)
+
     def search_cases(self, query: str, year_from: int | None = None, limit: int = 10) -> list[dict[str, Any]]:
         q = query.strip()
         if not q:
@@ -711,16 +735,23 @@ class JPCourtsAdapter(BaseAdapter):
                         norm = self._normalize_case(detailed, q, year_from)
                         if not norm:
                             continue
+                        if not self._matches_query(norm, q):
+                            # courts.go.jp returned an unrelated recent-listing
+                            # case (its search ignores the query) — drop it.
+                            continue
                         unique_by_source[norm["source_url"]] = norm
                         if len(unique_by_source) >= limit:
                             break
             except Exception:
-                # fall through to local fallback
+                # fall through to honest empty (no relevant match)
                 pass
 
             rows = list(unique_by_source.values())
             if not rows:
-                return self._load_local(q, year_from, limit)
+                # No relevant case found on courts.go.jp for this query. Return
+                # empty rather than an unrelated listing case or a hardcoded
+                # stub — surfacing a false "match" is worse than an honest miss.
+                return []
 
             rows.sort(key=lambda r: int(r.get("year", 0) or 0), reverse=True)
             return rows[:limit]
